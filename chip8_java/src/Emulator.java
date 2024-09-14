@@ -7,7 +7,7 @@ import java.awt.event.KeyEvent;
 import java.io.*;
 import java.util.Arrays;
 
-// TODO: implement SUPER-CHIP scrolling
+// TODO: make lores graphics take same space on screen as hires (rn its 1/4 the size)
 // TODO: implement flags to swap between chip-8, super-chip, xo-chip (See test 5)
 // TODO: Check Sound code (its all gpt, it seems to work tho)
 
@@ -18,7 +18,9 @@ public class Emulator {
         SCHIP,
         XOCHIP
     }
-    public static final int PIXEL_SCALE = 16; // How big each 'pixel' of the chip is on the user's actualy screen.
+    public static final int PIXEL_SCALE = 8; // How big each 'pixel' of the chip is on the user's actualy screen.
+    // TODO: make the pixels scale to the actual window size
+
     public static final int INSTRUCTIONS_PER_SECOND = 720; // Number of CPU instructions per second. Default: 720
     public static final int FPS = 60; // Display and timer refresh rate. Default: 60
     
@@ -88,7 +90,7 @@ public class Emulator {
         this.drawReady = true;
 
         // Set display size
-        this.frame.getContentPane().setPreferredSize(new Dimension(PIXEL_SCALE * (Chip.DISPLAY_COLS), PIXEL_SCALE * (Chip.DISPLAY_ROWS)));
+        this.frame.getContentPane().setPreferredSize(new Dimension(PIXEL_SCALE * (Chip.DISPLAY_COLS_HI_RES), PIXEL_SCALE * (Chip.DISPLAY_ROWS_HI_RES)));
         this.frame.pack();
 
         // Make close button terminate program
@@ -168,7 +170,7 @@ public class Emulator {
     
     public void draw() {
         boolean[][] pixels = this.chip.display;
-        this.display.setDisplayData(pixels, PIXEL_SCALE);
+        this.display.setDisplayData(pixels, PIXEL_SCALE/*(resolutionMode == Resolution.HI) ? PIXEL_SCALE : PIXEL_SCALE * 2*/);
         this.frame.add(this.display);
         this.frame.setVisible(true);
     }
@@ -210,22 +212,30 @@ public class Emulator {
                 switch (NN) {
                     case 0xE0: 
                         // 00E0: Clear Screen
-                        this.chip.display = new boolean[Chip.DISPLAY_ROWS][Chip.DISPLAY_COLS];
+                        this.chip.display = new boolean[Chip.DISPLAY_ROWS_HI_RES][Chip.DISPLAY_COLS_HI_RES];
                         this.drawReady = true; // Chip needs to signify a draw refresh to update to empty display
                         break;
                     case 0xEE:
                         // 00EE: Returning from a subroutine. Pops last address from stack and set PC to it
                         this.chip.pc = this.chip.stack.pop() & 0xFFFF;
                         break;
-                    case 0xFF:
-                        // 00FF: Enable high resolution display
-                        // TODO: actually update the chip's display to accomodate
-                        this.resolutionMode = Resolution.HI;
-                        break;
                     case 0xFE:
                         // 00FE: Enable low resolution display
-                        // TODO: actually update chip's display
-                        this.resolutionMode = Resolution.LO;
+                        if (chipType == ChipType.SCHIP) {
+                            this.resolutionMode = Resolution.LO;
+                            for (int i = 0; i < Chip.DISPLAY_ROWS_LO_RES; i++) {
+                                for (int j = 0; j < Chip.DISPLAY_COLS_LO_RES; j++) {
+                                    this.chip.display[i][j] = false; // Reset display
+                                }
+                            }
+                        }
+                        break;
+                    case 0xFF:
+                        // 00FF: Enable high resolution display
+                        if (chipType == ChipType.SCHIP) {
+                            this.resolutionMode = Resolution.HI;
+                            this.chip.display = new boolean[Chip.DISPLAY_ROWS_HI_RES][Chip.DISPLAY_COLS_HI_RES]; // Reset display
+                        }
                         break;
                     case 0xFB:
                         // 00FB: Scroll right 4 pixels
@@ -298,14 +308,23 @@ public class Emulator {
                     case 1:
                         // 8XY1: Binary OR. Set register VX to (VX | VY). VY is not changed
                         this.chip.registers[X] |= this.chip.registers[Y];
+                        if (config.RESET_FLAG_REG_ON_BIT_MANIP) {
+                            this.chip.registers[0xF] = 0;
+                        }
                         break;
                     case 2:
                         // 8XY2: Binary AND. Set register VX to (VX & VY). VY is not changed
                         this.chip.registers[X] &= this.chip.registers[Y];
+                        if (config.RESET_FLAG_REG_ON_BIT_MANIP) {
+                            this.chip.registers[0xF] = 0;
+                        }
                         break;
                     case 3:
                         // 8XY3: Binary XOR. Set register VX to (VX ^ VY). VY is not changed.
                         this.chip.registers[X] ^= this.chip.registers[Y];
+                        if (config.RESET_FLAG_REG_ON_BIT_MANIP) {
+                            this.chip.registers[0xF] = 0;
+                        }
                         break;
                     case 4:
                         // 8XY4: Add. Set register VX to value in (VX + VY). VY is not changed.
@@ -402,9 +421,33 @@ public class Emulator {
                 break;
             
             case 0xD:
-                if (N == 0 && this.resolutionMode == Resolution.HI) {
-                    // DXY0: SCHIP 16 pixel draw.
+                int displayWidth = getDisplayWidth();
+                int displayHeight = getDisplayHeight();
 
+                if (N == 0 && this.resolutionMode == Resolution.HI) {
+                    // DXY0: SCHIP 16 x 16 sprite draw.
+                    // This is a 16x16 sprite, so one row is 2 bytes. First byte is on left, second on right
+
+                    for (int row = 0; row < 16; row++) {
+                        if (((this.chip.registers[Y] % displayHeight) + row) >= displayHeight) continue; // Clip
+                        // Scan through every bit within the sprite's current row
+                        for (int col = 0; col < 16; col++) {
+                            if ((this.chip.registers[X] % displayWidth) + col >= displayWidth) continue; // Clip
+                            boolean flip = (((this.chip.memory[this.chip.I + row*2 + (col > 7 ? 1 : 0)] >>> (7 - (col % 8))) & 0x1/*& (0x80 >>> (col % 8))*/) != 0);
+                            if (flip) {
+                                int targetX = (this.chip.registers[X] + col) % displayWidth;
+                                int targetY = (this.chip.registers[Y] + row) % displayHeight;
+                                if (this.chip.display[targetY][targetX]) {
+                                    // We are going to flip a pixel to off so we have to set VF to 1
+                                    this.chip.registers[0xF] = 1;
+                                }
+                                // Flip the pixel
+                                this.chip.display[targetY][targetX] ^= true;
+                            }
+                        }
+                    }
+                    this.drawReady = true;
+                    
                 } else {
                     // DXYN: Display/Draw
                     /** Draws an N pixel tall sprite from memory location indicated by I register.
@@ -412,28 +455,31 @@ public class Emulator {
                      * "On" pixels will flip the current pixels on the screen (read bits left to right, most to least sig bit).
                      * If any pixels were turned off after flipping, set VF to 1, otherwise set to 0.
                      */
-                    int X_coord = this.chip.registers[X] % Chip.DISPLAY_COLS;
-                    int Y_coord = this.chip.registers[Y] % Chip.DISPLAY_ROWS;
                     this.chip.registers[0xF] = 0; // Set VF to 0 for now
+                    int resMultiplier = this.resolutionMode == Resolution.LO ? 2 : 1;
+
 
                     // Scan through each of the N rows of the sprite
                     for (int row = 0; row < N; row++) {
-                        byte nth_byte = this.chip.memory[this.chip.I + row]; // Represents one row of the sprite
-                        if (row + Y_coord >= Chip.DISPLAY_ROWS) break;
+                        if (((this.chip.registers[Y] % displayHeight) + row) >= displayHeight) continue; // Clip
 
                         // Scan through every bit within the current row
                         for (int col = 0; col < 8; col++) {
-                            if (col + X_coord >= Chip.DISPLAY_COLS) break;
+                            if ((this.chip.registers[X] % displayWidth) + col >= displayWidth) continue; // Clip
+                            System.out.println(this.chip.registers[X] + " " + this.chip.registers[Y] + " " + row + " " + col);
 
                             // Find out whether or not we flip the current pixel
-                            boolean flip = ((nth_byte & (0x80 >>> col)) != 0);
+                            boolean flip = (((this.chip.memory[this.chip.I + row] >>> (7-col)) & 0x1/*(0x80 >>> col)*/) != 0);
                             if (flip) {
-                                if (this.chip.display[Y_coord + row][X_coord + col]) {
+                                int targetX = (this.chip.registers[X] + col) % displayWidth;
+                                int targetY = (this.chip.registers[Y] + row) % displayHeight;
+                                System.out.println(targetX + " " + targetY + " " + displayWidth + " " + displayHeight);
+                                if (this.chip.display[targetY][targetX]) {
                                     // We are going to flip a pixel to off so we have to set VF to 1
                                     this.chip.registers[0xF] = 1;
                                 }
                                 // Flip the pixel
-                                this.chip.display[Y_coord + row][X_coord + col] ^= true;
+                                this.chip.display[targetY][targetX] ^= true;
                             }
                         }
                     }
@@ -532,6 +578,11 @@ public class Emulator {
                         //       so we only have to actually look at the last nibble of VX
                         this.chip.I = Chip.FONT_START_ADDRESS + (this.chip.registers[X] & 0xF) * Chip.CHARACTER_FONT_HEIGHT;
                         break;
+                    case 0x30:
+                        // FX30: SUPERCHIP: Sets index register I to address of large font in VX
+                        // note: X can only be 0->9
+                        this.chip.I = Chip.LARGE_FONT_START_ADDRESS + (this.chip.registers[X] & 0xF) * Chip.LARGE_CHARACTER_FONT_HEIGHT;
+                        break;
                     case 0x33:
                         // FX33: Binary-coded decimal conversion. Take number in VX and convert it to 3 decimal digits.
                         // VX stores 1 byte (000-255). Store the digits in memory starting at index register I (I -> I + 2)
@@ -570,32 +621,29 @@ public class Emulator {
     }
 
     /*
-     * Scroll the display 4 pixels to the left, leaving 'off' pixels where new pixels were added
+     * Scroll the display 4 pixels to the right, leaving 'off' pixels where new pixels were added
      */
-    private void scrollDisplayLeft() {
-        int displayWidth = getDisplayWidth();
-        int displayHeight = getDisplayHeight();
+    private void scrollDisplayRight() {
         boolean[][] oldDisplay = this.chip.display;
-        this.chip.display = new boolean[displayHeight][displayWidth];
+        this.chip.display = new boolean[Chip.DISPLAY_ROWS_HI_RES][Chip.DISPLAY_COLS_HI_RES];
 
-        for (int i = 0; i < displayHeight; i++) {
-            for (int j = 0; j < displayWidth - 4; j++) {
+        for (int i = 0; i < Chip.DISPLAY_ROWS_HI_RES; i++) {
+            for (int j = 0; j < Chip.DISPLAY_COLS_HI_RES - 4; j++) {
                 this.chip.display[i][j + 4] = oldDisplay[i][j];
             }
         }
     }
     
     /*
-     * Scroll the display 4 pixels to the right, leaving 'off' pixels where new pixels were added
+     * Scroll the display 4 pixels to the left, leaving 'off' pixels where new pixels were added
      */
-    private void scrollDisplayRight() {
-        int displayWidth = getDisplayWidth();
-        int displayHeight = getDisplayHeight();
+    private void scrollDisplayLeft() {
+        // int displayCols = this.resolutionMode == Resolution.HI ? Chip.DISPLAY_COLS_HI_RES : Chip.DISPLAY_COLS_LO_RES;
         boolean[][] oldDisplay = this.chip.display;
-        this.chip.display = new boolean[displayHeight][displayWidth];
+        this.chip.display = new boolean[Chip.DISPLAY_ROWS_HI_RES][Chip.DISPLAY_COLS_HI_RES];
 
-        for (int i = 0; i < displayHeight; i++) {
-            for (int j = 4; j < displayWidth; j++) {
+        for (int i = 0; i < Chip.DISPLAY_ROWS_HI_RES; i++) {
+            for (int j = 4; j < Chip.DISPLAY_COLS_HI_RES; j++) {
                 this.chip.display[i][j - 4] = oldDisplay[i][j];
             }
         }
@@ -605,14 +653,12 @@ public class Emulator {
      * Scroll the display n pixels down, leaving 'off' pixels where new pixels were added
      */
     private void scrollDisplayDown(int n) {
-        int displayWidth = getDisplayWidth();
-        int displayHeight = getDisplayHeight();
         boolean[][] oldDisplay = this.chip.display;
-        this.chip.display = new boolean[displayHeight][displayWidth];
+        this.chip.display = new boolean[Chip.DISPLAY_ROWS_HI_RES][Chip.DISPLAY_COLS_HI_RES];
 
-        for (int i = 0; i < displayHeight - n; i++) {
-            for (int j = 0; j < displayWidth; j++) {
-                this.chip.display[i][j + n] = oldDisplay[i][j];
+        for (int i = 0; i < Chip.DISPLAY_ROWS_HI_RES - n; i++) {
+            for (int j = 0; j < Chip.DISPLAY_COLS_HI_RES; j++) {
+                this.chip.display[i + n][j] = oldDisplay[i][j];
             }
         }
     }
@@ -628,6 +674,6 @@ public class Emulator {
      * Gets the display's current height in pixels
      */
     private int getDisplayHeight() {
-        return this.resolutionMode == Resolution.LO ? DISPLAY_ROWS_LO_RES: DISPLAY_COLS_HI_RES;
+        return this.resolutionMode == Resolution.LO ? DISPLAY_ROWS_LO_RES: DISPLAY_ROWS_HI_RES;
     }
 }

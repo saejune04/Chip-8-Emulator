@@ -170,7 +170,7 @@ public class Emulator {
     
     public void draw() {
         boolean[][] pixels = this.chip.display;
-        this.display.setDisplayData(pixels, PIXEL_SCALE/*(resolutionMode == Resolution.HI) ? PIXEL_SCALE : PIXEL_SCALE * 2*/);
+        this.display.setDisplayData(pixels, PIXEL_SCALE, resolutionMode == Resolution.HI/*(resolutionMode == Resolution.HI) ? PIXEL_SCALE : PIXEL_SCALE * 2*/);
         this.frame.add(this.display);
         this.frame.setVisible(true);
     }
@@ -456,8 +456,6 @@ public class Emulator {
                      * If any pixels were turned off after flipping, set VF to 1, otherwise set to 0.
                      */
                     this.chip.registers[0xF] = 0; // Set VF to 0 for now
-                    int resMultiplier = this.resolutionMode == Resolution.LO ? 2 : 1;
-
 
                     // Scan through each of the N rows of the sprite
                     for (int row = 0; row < N; row++) {
@@ -466,14 +464,12 @@ public class Emulator {
                         // Scan through every bit within the current row
                         for (int col = 0; col < 8; col++) {
                             if ((this.chip.registers[X] % displayWidth) + col >= displayWidth) continue; // Clip
-                            System.out.println(this.chip.registers[X] + " " + this.chip.registers[Y] + " " + row + " " + col);
 
                             // Find out whether or not we flip the current pixel
                             boolean flip = (((this.chip.memory[this.chip.I + row] >>> (7-col)) & 0x1/*(0x80 >>> col)*/) != 0);
                             if (flip) {
                                 int targetX = (this.chip.registers[X] + col) % displayWidth;
                                 int targetY = (this.chip.registers[Y] + row) % displayHeight;
-                                System.out.println(targetX + " " + targetY + " " + displayWidth + " " + displayHeight);
                                 if (this.chip.display[targetY][targetX]) {
                                     // We are going to flip a pixel to off so we have to set VF to 1
                                     this.chip.registers[0xF] = 1;

@@ -11,49 +11,81 @@ import java.util.Arrays;
 // TODO: implement flags to swap between chip-8, super-chip, xo-chip (See test 5)
 // TODO: Check Sound code (its all gpt, it seems to work tho)
 
-public class Emulator {
-    // Config
-    public static final boolean SHIFT_USE_VY = false; // For instructions 0x8XY6 and 0x8XYE. false is more modern (chip-48, super-chip)
-    public static final boolean STORE_MEMORY_INCREMENTS_INDEX = false; // For instructions 0xFX55 and 0xFX65
-    public static final boolean JUMP_NNN = false; // For instruction 0xBNNN/0xBXNN
-
-    public static final int PIXEL_SCALE = 16; // How big each 'pixel' of the chip is on the user's actualy screen. Default: 16
+public class Emulator {    
+    // Config constants
+    private enum ChipType {
+        CHIP8,
+        SCHIP,
+        XOCHIP
+    }
+    public static final int PIXEL_SCALE = 16; // How big each 'pixel' of the chip is on the user's actualy screen.
     public static final int INSTRUCTIONS_PER_SECOND = 720; // Number of CPU instructions per second. Default: 720
     public static final int FPS = 60; // Display and timer refresh rate. Default: 60
-
-    public static final int[] KEYPAD = {
+    
+    
+    // User interface
+    private JFrame frame;
+    private Display display;
+    private InputKeyListener keyListener;
+    private static final int[] KEYPAD = {
         KeyEvent.VK_X, KeyEvent.VK_1, KeyEvent.VK_2, KeyEvent.VK_3,
         KeyEvent.VK_Q, KeyEvent.VK_W, KeyEvent.VK_E, KeyEvent.VK_A,
         KeyEvent.VK_S, KeyEvent.VK_D, KeyEvent.VK_Z, KeyEvent.VK_C,
         KeyEvent.VK_4, KeyEvent.VK_R, KeyEvent.VK_F, KeyEvent.VK_V
     };
-
-    // User interface
-    public JFrame frame;
-    public Display display;
-    public InputKeyListener keyListener;
-
-    // Chip8
+    private boolean drawReady;
+    
+    // Chip
+    private ChipType chipType;
     private Chip chip; // The chip whos state this emulator manipulates
-
+    
     // Sound player
     private String soundFilePath;
 
     // ignore these i just have immense skill issue so i don't know how to handle this lol
     private boolean[] oldDown;
     private boolean[] newDown;
-
+    
     // Is the chip halted?
     private boolean halted;
+    
+    // Resolution
+    private enum Resolution {
+        HI,
+        LO
+    }
+    // Default resolution
+    public static final int DISPLAY_COLS_LO_RES = 64;
+    public static final int DISPLAY_ROWS_LO_RES = 32;
+    
+    // SuperChip high-res mode
+    public static final int DISPLAY_COLS_HI_RES = 128;
+    public static final int DISPLAY_ROWS_HI_RES = 64;
+    
+    private Resolution resolutionMode;
 
-    public Emulator(String soundFilePath) {
-        this.soundFilePath = soundFilePath;
+    // Config variables
+    private Config config;
+
+    public Emulator(String chipMode) {
+        // Setup
+        this.soundFilePath = "chip8_java\\sounds\\pluck.wav";
+        if (chipMode.equals("chip8")) {
+            this.chipType = ChipType.CHIP8;
+        } else if (chipMode.equals("schip")) {
+            this.chipType = ChipType.SCHIP;
+        } else {
+            this.chipType = ChipType.XOCHIP;
+        }
+
+        this.config = new Config(chipMode);
 
         // Set up Display and Keylistener
         this.frame = new JFrame("Chip8 Java Emulator");
         this.display = new Display();
         this.keyListener = new InputKeyListener(this); // Create a keylistener for this emulator
         this.frame.addKeyListener(keyListener);
+        this.drawReady = true;
 
         // Set display size
         this.frame.getContentPane().setPreferredSize(new Dimension(PIXEL_SCALE * (Chip.DISPLAY_COLS), PIXEL_SCALE * (Chip.DISPLAY_ROWS)));
@@ -69,6 +101,9 @@ public class Emulator {
         this.oldDown = new boolean[KEYPAD.length];
         this.newDown = new boolean[KEYPAD.length];
         this.halted = false;
+
+        // Init resolution to lores
+        this.resolutionMode = Resolution.LO;
     }
 
     public void run() {
@@ -90,10 +125,10 @@ public class Emulator {
             }
             
             // Redraw display
-            if (this.chip.draw_ready) {
+            if (this.drawReady) {
                 draw();
                 this.frame.repaint();
-                this.chip.draw_ready = false;
+                this.drawReady = false;
             }
 
             // Keeps track of internal clock for steady FPS
@@ -165,6 +200,8 @@ public class Emulator {
         int NN = opcode & 0x00FF; // Third + Fourth nibble
         int NNN = opcode & 0x0FFF; // Second + Third + Fourth nibble
 
+        // System.out.println(Integer.toHexString(opcode));
+
         // Each value can be used in the following instructions:
         // EXECUTE
         int oldX = 0;
@@ -172,14 +209,36 @@ public class Emulator {
             case 0x0:
                 switch (NN) {
                     case 0xE0: 
-                        // Clear Screen
+                        // 00E0: Clear Screen
                         this.chip.display = new boolean[Chip.DISPLAY_ROWS][Chip.DISPLAY_COLS];
-                        this.chip.draw_ready = true; // Chip needs to signify a draw refresh to update to empty display
+                        this.drawReady = true; // Chip needs to signify a draw refresh to update to empty display
                         break;
                     case 0xEE:
                         // 00EE: Returning from a subroutine. Pops last address from stack and set PC to it
                         this.chip.pc = this.chip.stack.pop() & 0xFFFF;
                         break;
+                    case 0xFF:
+                        // 00FF: Enable high resolution display
+                        // TODO: actually update the chip's display to accomodate
+                        this.resolutionMode = Resolution.HI;
+                        break;
+                    case 0xFE:
+                        // 00FE: Enable low resolution display
+                        // TODO: actually update chip's display
+                        this.resolutionMode = Resolution.LO;
+                        break;
+                    case 0xFB:
+                        // 00FB: Scroll right 4 pixels
+                        scrollDisplayRight();
+                        break;
+                    case 0xFC:
+                        // 00FC: Scroll left 4 pixels
+                        scrollDisplayLeft();
+                        break;
+                }
+                if (Y == 0xC) {
+                    // 00CN: Scroll down N pixels (0-15)
+                    scrollDisplayDown(N);
                 }
                 break;
 
@@ -274,7 +333,7 @@ public class Emulator {
                     case 6:
                         // 8XY6: Shift. Bit shift VX 1 bit to the right, set VF to the bit that was shifted out.
                         // If config says to do so, put VY into VX then shift. In either case, VY is not affected.
-                        if (SHIFT_USE_VY) {
+                        if (config.SHIFT_USE_VY) {
                             this.chip.registers[X] = this.chip.registers[Y];   
                         }
                         oldX = this.chip.registers[X];
@@ -300,7 +359,7 @@ public class Emulator {
                     case 0xE:
                         // 8XYE: Shift. Bit shift VX 1 bit to the left, set VF to the bit that was shifted out.
                         // If config says to do so, put VY into VX then shift. In either case, VY is not affected.
-                        if (SHIFT_USE_VY) {
+                        if (config.SHIFT_USE_VY) {
                             this.chip.registers[X] = this.chip.registers[Y];   
                         }
                         oldX = this.chip.registers[X];
@@ -328,7 +387,7 @@ public class Emulator {
             case 0xB:
                 // BNNN / BXNN: Jump with offset. 
                 // If config jump_nnn=true, jumps to NNN + value in V0. Otherwise jump to XNN + value in VX.
-                if (JUMP_NNN) {
+                if (config.JUMP_NNN) {
                     this.chip.pc = NNN + this.chip.registers[0];
                 } else {
                     this.chip.pc = NNN + this.chip.registers[X];
@@ -343,39 +402,43 @@ public class Emulator {
                 break;
             
             case 0xD:
-                // DXYN: Display/Draw
-                /** Draws an N pixel tall sprite from memory location indicated by I register.
-                 * Horizontal X coordinate in VX, vertical Y coordinate in VY register
-                 * "On" pixels will flip the current pixels on the screen (read bits left to right, most to least sig bit).
-                 * If any pixels were turned off after flipping, set VF to 1, otherwise set to 0.
-                 */
-                int X_coord = this.chip.registers[X] % Chip.DISPLAY_COLS;
-                int Y_coord = this.chip.registers[Y] % Chip.DISPLAY_ROWS;
-                this.chip.registers[0xF] = 0; // Set VF to 0 for now
+                if (N == 0 && this.resolutionMode == Resolution.HI) {
+                    // DXY0: SCHIP 16 pixel draw.
 
-                // Scan through each of the N rows of the sprite
-                for (int row = 0; row < N; row++) {
-                    byte nth_byte = this.chip.memory[this.chip.I + row]; // Represents one row of the sprite
-                    if (row + Y_coord >= Chip.DISPLAY_ROWS) break;
+                } else {
+                    // DXYN: Display/Draw
+                    /** Draws an N pixel tall sprite from memory location indicated by I register.
+                     * Horizontal X coordinate in VX, vertical Y coordinate in VY register
+                     * "On" pixels will flip the current pixels on the screen (read bits left to right, most to least sig bit).
+                     * If any pixels were turned off after flipping, set VF to 1, otherwise set to 0.
+                     */
+                    int X_coord = this.chip.registers[X] % Chip.DISPLAY_COLS;
+                    int Y_coord = this.chip.registers[Y] % Chip.DISPLAY_ROWS;
+                    this.chip.registers[0xF] = 0; // Set VF to 0 for now
 
-                    // Scan through every bit within the current row
-                    for (int col = 0; col < 8; col++) {
-                        if (col + X_coord >= Chip.DISPLAY_COLS) break;
+                    // Scan through each of the N rows of the sprite
+                    for (int row = 0; row < N; row++) {
+                        byte nth_byte = this.chip.memory[this.chip.I + row]; // Represents one row of the sprite
+                        if (row + Y_coord >= Chip.DISPLAY_ROWS) break;
 
-                        // Find out whether or not we flip the current pixel
-                        boolean flip = ((nth_byte & (0x80 >>> col)) != 0);
-                        if (flip) {
-                            if (this.chip.display[Y_coord + row][X_coord + col]) {
-                                // We are going to flip a pixel to off so we have to set VF to 1
-                                this.chip.registers[0xF] = 1;
+                        // Scan through every bit within the current row
+                        for (int col = 0; col < 8; col++) {
+                            if (col + X_coord >= Chip.DISPLAY_COLS) break;
+
+                            // Find out whether or not we flip the current pixel
+                            boolean flip = ((nth_byte & (0x80 >>> col)) != 0);
+                            if (flip) {
+                                if (this.chip.display[Y_coord + row][X_coord + col]) {
+                                    // We are going to flip a pixel to off so we have to set VF to 1
+                                    this.chip.registers[0xF] = 1;
+                                }
+                                // Flip the pixel
+                                this.chip.display[Y_coord + row][X_coord + col] ^= true;
                             }
-                            // Flip the pixel
-                            this.chip.display[Y_coord + row][X_coord + col] ^= true;
                         }
                     }
+                    this.drawReady = true;
                 }
-                this.chip.draw_ready = true;
-
                 break;
 
             case 0xE:
@@ -433,9 +496,7 @@ public class Emulator {
                             // Keeps track of all newly pressed keys
                             this.newDown = new boolean[KEYPAD.length];
                         }
-
                         boolean keyPressed = false;
-
 
                         // Scans through all current inputs for differences
                         for (int i = 0; i < this.chip.inputs.length; i++) {
@@ -443,6 +504,7 @@ public class Emulator {
                                 // Key is pressed even when it wasn't pressed earlier.
                                 // New keypress down: we can continue!
                                 if (!this.oldDown[i]) {
+                                    this.oldDown[i] = true; // Just so this doesnt run again
                                     this.newDown[i] = true;
                                 }
                             } else {
@@ -486,7 +548,7 @@ public class Emulator {
                         for (int i = 0; i <= X; i++) {
                             this.chip.memory[chip.I + i] = (byte)(this.chip.registers[i]);
                         }
-                        if (STORE_MEMORY_INCREMENTS_INDEX) {
+                        if (config.STORE_MEMORY_INCREMENTS_INDEX) {
                             this.chip.I += (X + 1);
                         }
                         break;
@@ -495,7 +557,7 @@ public class Emulator {
                         for (int i = 0; i <= X; i++) {
                             this.chip.registers[i] = Byte.toUnsignedInt(this.chip.memory[this.chip.I + i]); // Java bad so we have to ensure unsigned conversion
                         }
-                        if (STORE_MEMORY_INCREMENTS_INDEX) {
+                        if (config.STORE_MEMORY_INCREMENTS_INDEX) {
                             this.chip.I += (X + 1);
                         }
                         break;
@@ -505,5 +567,67 @@ public class Emulator {
             default:
                 System.out.println("Unknown opcode: " + opcode);
         }
+    }
+
+    /*
+     * Scroll the display 4 pixels to the left, leaving 'off' pixels where new pixels were added
+     */
+    private void scrollDisplayLeft() {
+        int displayWidth = getDisplayWidth();
+        int displayHeight = getDisplayHeight();
+        boolean[][] oldDisplay = this.chip.display;
+        this.chip.display = new boolean[displayHeight][displayWidth];
+
+        for (int i = 0; i < displayHeight; i++) {
+            for (int j = 0; j < displayWidth - 4; j++) {
+                this.chip.display[i][j + 4] = oldDisplay[i][j];
+            }
+        }
+    }
+    
+    /*
+     * Scroll the display 4 pixels to the right, leaving 'off' pixels where new pixels were added
+     */
+    private void scrollDisplayRight() {
+        int displayWidth = getDisplayWidth();
+        int displayHeight = getDisplayHeight();
+        boolean[][] oldDisplay = this.chip.display;
+        this.chip.display = new boolean[displayHeight][displayWidth];
+
+        for (int i = 0; i < displayHeight; i++) {
+            for (int j = 4; j < displayWidth; j++) {
+                this.chip.display[i][j - 4] = oldDisplay[i][j];
+            }
+        }
+    }
+    
+    /*
+     * Scroll the display n pixels down, leaving 'off' pixels where new pixels were added
+     */
+    private void scrollDisplayDown(int n) {
+        int displayWidth = getDisplayWidth();
+        int displayHeight = getDisplayHeight();
+        boolean[][] oldDisplay = this.chip.display;
+        this.chip.display = new boolean[displayHeight][displayWidth];
+
+        for (int i = 0; i < displayHeight - n; i++) {
+            for (int j = 0; j < displayWidth; j++) {
+                this.chip.display[i][j + n] = oldDisplay[i][j];
+            }
+        }
+    }
+    
+    /*
+     * Gets the display's current width in pixels
+     */
+    private int getDisplayWidth() {
+        return this.resolutionMode == Resolution.LO ? DISPLAY_COLS_LO_RES : DISPLAY_COLS_HI_RES;
+    }
+    
+    /*
+     * Gets the display's current height in pixels
+     */
+    private int getDisplayHeight() {
+        return this.resolutionMode == Resolution.LO ? DISPLAY_ROWS_LO_RES: DISPLAY_COLS_HI_RES;
     }
 }

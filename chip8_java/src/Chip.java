@@ -4,14 +4,26 @@ import java.util.Stack;
 import java.lang.Math;
 
 public class Chip {
-    public static final int MEMORY_SIZE = 4096; // 4KB of memory
+    
+    // Default resolution
     public static final int DISPLAY_COLS = 64;
     public static final int DISPLAY_ROWS = 32;
+    
+    // SuperChip high-res mode
+    public static final int DISPLAY_COLS_HI_RES = 128;
+    public static final int DISPLAY_ROWS_HI_RES = 64;
+    
+    // Memory
+    public static final int MEMORY_SIZE = 4096; // 4KB of memory
+    public static final int PROGRAM_START_ADDRESS = 0x200; // Load programs into memory starting at 0x200
+
+    // Font data
     public static final int FONT_START_ADDRESS = 0x50; // Fonts start at 0x50 and end at 0x9F 
     public static final int FONT_SIZE = 80; 
-    public static final int PROGRAM_START_ADDRESS = 0x200; // Load programs into memory starting at 0x200
-    public static final int NUM_INPUTS = 16;
     public static final int CHARACTER_FONT_HEIGHT = 5;
+
+    // States
+    public static final int NUM_INPUTS = 16;
     public static final int NUM_REGISTERS = 16;
 
     // Each character is 4 pixels wide and 5 pixels tall
@@ -47,9 +59,6 @@ public class Chip {
     public boolean[] inputs; // 16 possible inputs
     public int opcode;
 
-    // Flags
-    public boolean draw_ready; // True if ready to be redrawn, otherwise false
-
     public Chip() {
         this.memory = new byte[MEMORY_SIZE];
         this.stack = new Stack<>();
@@ -57,7 +66,6 @@ public class Chip {
         this.display = new boolean[DISPLAY_ROWS][DISPLAY_COLS];
         this.inputs = new boolean[NUM_INPUTS];
         this.pc = PROGRAM_START_ADDRESS;
-        this.draw_ready = false;
     }
 
     public void init() {

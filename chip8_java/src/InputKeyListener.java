@@ -15,12 +15,12 @@ public class InputKeyListener implements KeyListener {
     
     @Override
     public void keyPressed(KeyEvent e) {
-        emulator.handleUserInput(e, false);
+        emulator.handleUserInput(e, true);
     }
 
     @Override
     public void keyReleased(KeyEvent e) {
-        emulator.handleUserInput(e, true);
+        emulator.handleUserInput(e, false);
     }
     
 }

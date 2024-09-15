@@ -20,9 +20,7 @@ public class Chip {
 
     // Font data
     public static final int FONT_START_ADDRESS = 0x50; // Fonts start at 0x50 and end at 0x9F 
-    public static final int LARGE_FONT_START_ADDRESS = 0x100; // Big fonts start here
    
-    public static final int FONT_SIZE = 80; // 80 bytes
     public static final int LARGE_FONT_SIZE = 100; // 100 bytes. Big font only has 0-10
     
     public static final int CHARACTER_FONT_HEIGHT = 5; // 5 pixels tall
@@ -113,14 +111,13 @@ public class Chip {
         this.inputs = new boolean[NUM_INPUTS];
         this.pc = PROGRAM_START_ADDRESS;
 
-
         // Format memory with fonts
-        for (int i = 0; i < FONT_SIZE; i++) {
+        for (int i = 0; i < FONT_SET.length; i++) {
             this.memory[i + FONT_START_ADDRESS] = (byte)FONT_SET[i];
         }
         
         for (int i = 0; i < LARGE_FONT_SIZE; i++) {
-            this.memory[i + LARGE_FONT_START_ADDRESS] = (byte)LARGE_FONT_SET_SCHIP[i];
+            this.memory[i + FONT_START_ADDRESS + FONT_SET.length] = (byte)LARGE_FONT_SET_SCHIP[i];
         }
 
         // Init empty flag registers

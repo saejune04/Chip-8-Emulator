@@ -1,7 +1,6 @@
 package chip8_java.src;
 
 import javax.swing.*;
-
 import java.awt.Dimension;
 import java.awt.event.KeyEvent;
 import java.io.*;
@@ -9,7 +8,9 @@ import java.util.Arrays;
 
 // TODO: implement flags to swap between chip-8, super-chip, xo-chip (See test 5)
 // TODO: Check Sound code (its all gpt, it seems to work tho)
-// TODO: implement chip48 flag registers (FX75 and FX85)
+// TODO: Check that my code for the instructions doesn't set registers before potentially needing the old value of that register
+
+// TODO IMPORTANT: Fix whatever bug doesnt allow my animations to work >:C (see animations/gradsim and games/binding)
 
 public class Emulator {    
     // Config constants
@@ -21,7 +22,7 @@ public class Emulator {
     public static final int PIXEL_SCALE = 8; // How big each 'pixel' of the chip is on the user's actualy screen.
     // TODO: make the pixels scale to the actual window size
 
-    public static final int INSTRUCTIONS_PER_SECOND = 720; // Number of CPU instructions per second. Default: 720
+    public static final int INSTRUCTIONS_PER_SECOND = 7200; // Number of CPU instructions per second. Default: 720
     public static final int FPS = 60; // Display and timer refresh rate. Default: 60
     
     
@@ -69,6 +70,9 @@ public class Emulator {
     // Config variables
     private Config config;
 
+    private boolean quit;
+    private boolean debugMode;
+
     public Emulator(String chipMode) {
         // Setup
         this.soundFilePath = "chip8_java\\sounds\\pluck.wav";
@@ -106,12 +110,15 @@ public class Emulator {
 
         // Init resolution to lores
         this.resolutionMode = Resolution.LO;
+
+        this.quit = false;
+        this.debugMode = false; // Set to true to print useful information
     }
 
     public void run() {
         // Timers and display refreshes at rate of FPS
         // Instructions occur at a rate of IPS
-        while (true) {
+        while (!this.quit) {
             // Update timers
             this.chip.updateTimers();
             if (this.chip.soundTimer > 0) {
@@ -202,12 +209,23 @@ public class Emulator {
         int NN = opcode & 0x00FF; // Third + Fourth nibble
         int NNN = opcode & 0x0FFF; // Second + Third + Fourth nibble
 
+        if (this.debugMode) {
+            System.out.println("op: " + Integer.toHexString(opcode));
+        }
+        // System.out.println("registers: " + Arrays.toString(this.chip.registers));
+
         // Each value can be used in the following instructions:
         // EXECUTE
         int oldX = 0;
+        int oldY = 0;
         switch (category) {
             case 0x0:
                 switch (NN) {
+                    case 0x00:
+                        // 0000: Leave program on screen and freeze
+                        break;
+                        // while(true) {
+                        // }
                     case 0xE0: 
                         // 00E0: Clear Screen
                         this.chip.display = new boolean[Chip.DISPLAY_ROWS_HI_RES][Chip.DISPLAY_COLS_HI_RES];
@@ -219,21 +237,17 @@ public class Emulator {
                         break;
                     case 0xFE:
                         // 00FE: Enable low resolution display
-                        if (chipType == ChipType.SCHIP) {
-                            this.resolutionMode = Resolution.LO;
-                            for (int i = 0; i < Chip.DISPLAY_ROWS_LO_RES; i++) {
-                                for (int j = 0; j < Chip.DISPLAY_COLS_LO_RES; j++) {
-                                    this.chip.display[i][j] = false; // Reset display
-                                }
+                        this.resolutionMode = Resolution.LO;
+                        for (int i = 0; i < Chip.DISPLAY_ROWS_LO_RES; i++) {
+                            for (int j = 0; j < Chip.DISPLAY_COLS_LO_RES; j++) {
+                                this.chip.display[i][j] = false; // Reset display
                             }
                         }
                         break;
                     case 0xFF:
                         // 00FF: Enable high resolution display
-                        if (chipType == ChipType.SCHIP) {
-                            this.resolutionMode = Resolution.HI;
-                            this.chip.display = new boolean[Chip.DISPLAY_ROWS_HI_RES][Chip.DISPLAY_COLS_HI_RES]; // Reset display
-                        }
+                        this.resolutionMode = Resolution.HI;
+                        this.chip.display = new boolean[Chip.DISPLAY_ROWS_HI_RES][Chip.DISPLAY_COLS_HI_RES]; // Reset display
                         break;
                     case 0xFB:
                         // 00FB: Scroll right 4 pixels
@@ -243,10 +257,15 @@ public class Emulator {
                         // 00FC: Scroll left 4 pixels
                         scrollDisplayLeft();
                         break;
+                    case 0xFD:
+                        // 00FD: Exit the interpreter
+                        this.quit = true;
+                        break;
                 }
                 if (Y == 0xC) {
                     // 00CN: Scroll down N pixels (0-15)
                     scrollDisplayDown(N);
+                    break;
                 }
                 break;
 
@@ -327,13 +346,14 @@ public class Emulator {
                     case 4:
                         // 8XY4: Add. Set register VX to value in (VX + VY). VY is not changed.
                         // Unlike 7XNN, will affect carry flag if overflow
+                        oldX = this.chip.registers[X];
                         this.chip.registers[X] += this.chip.registers[Y];
-                        if (this.chip.registers[X] > 0xFF) {
+                        this.chip.registers[X] &= 0xFF; // Truncates to 8-bits because java bad
+                        if ((oldX + this.chip.registers[Y]) > 0xFF) {
                             this.chip.registers[0xF] = 1;
                         } else {
                             this.chip.registers[0xF] = 0;
                         }
-                        this.chip.registers[X] &= 0xFF; // Truncates to 8-bits because java bad
                         break;
                     case 5:
                         // 8XY5: Subtract. Set register VX to (VX - VY). VY is not changed.
@@ -362,15 +382,15 @@ public class Emulator {
                     case 7:
                         // 8XY7: Subtract. Set register VX to (VY - VX). VY is not changed.
                         // Sets carry flag VF to 1 if first operand >= second operand.
-                        oldX = this.chip.registers[X];
+                        oldY = this.chip.registers[Y];
                         this.chip.registers[X] = this.chip.registers[Y] - this.chip.registers[X];
                         this.chip.registers[X] &= 0xFF; // Truncates to 8-bits because java bad
 
-                        // Make sure to update carry bit last
-                        if (this.chip.registers[Y] >= oldX) {
-                            this.chip.registers[0xF] = 1;
-                        } else {
+                        // Make sure to update carry bit last (if underflow)
+                        if (oldY < chip.registers[X]) {
                             this.chip.registers[0xF] = 0;
+                        } else {
+                            this.chip.registers[0xF] = 1;
                         }
                         break;
                     case 0xE:
@@ -421,11 +441,12 @@ public class Emulator {
             case 0xD:
                 int displayWidth = getDisplayWidth();
                 int displayHeight = getDisplayHeight();
-
+                boolean setFlag = false;
+                
                 if (N == 0 && this.resolutionMode == Resolution.HI) {
                     // DXY0: SCHIP 16 x 16 sprite draw.
                     // This is a 16x16 sprite, so one row is 2 bytes. First byte is on left, second on right
-
+                    
                     for (int row = 0; row < 16; row++) {
                         if (((this.chip.registers[Y] % displayHeight) + row) >= displayHeight) continue; // Clip
                         // Scan through every bit within the sprite's current row
@@ -437,12 +458,17 @@ public class Emulator {
                                 int targetY = (this.chip.registers[Y] + row) % displayHeight;
                                 if (this.chip.display[targetY][targetX]) {
                                     // We are going to flip a pixel to off so we have to set VF to 1
-                                    this.chip.registers[0xF] = 1;
+                                    setFlag = true;
                                 }
                                 // Flip the pixel
                                 this.chip.display[targetY][targetX] ^= true;
                             }
                         }
+                    }
+                    if (setFlag) {
+                        this.chip.registers[0xF] = 1;
+                    } else {
+                        this.chip.registers[0xF] = 0;
                     }
                     this.drawReady = true;
                     
@@ -453,8 +479,7 @@ public class Emulator {
                      * "On" pixels will flip the current pixels on the screen (read bits left to right, most to least sig bit).
                      * If any pixels were turned off after flipping, set VF to 1, otherwise set to 0.
                      */
-                    this.chip.registers[0xF] = 0; // Set VF to 0 for now
-
+                    
                     // Scan through each of the N rows of the sprite
                     for (int row = 0; row < N; row++) {
                         if (((this.chip.registers[Y] % displayHeight) + row) >= displayHeight) continue; // Clip
@@ -470,12 +495,17 @@ public class Emulator {
                                 int targetY = (this.chip.registers[Y] + row) % displayHeight;
                                 if (this.chip.display[targetY][targetX]) {
                                     // We are going to flip a pixel to off so we have to set VF to 1
-                                    this.chip.registers[0xF] = 1;
+                                    setFlag = true;
                                 }
                                 // Flip the pixel
                                 this.chip.display[targetY][targetX] ^= true;
                             }
                         }
+                    }
+                    if (setFlag) {
+                        this.chip.registers[0xF] = 1;
+                    } else {
+                        this.chip.registers[0xF] = 0;
                     }
                     this.drawReady = true;
                 }
@@ -516,12 +546,16 @@ public class Emulator {
                     case 0x1E:
                         // FX1E: Add value in VX to index register I
                         // Does not affect VF on overflow, but you can set VF if you really want like some interpretors
+                        oldX = this.chip.registers[X];
                         this.chip.I += this.chip.registers[X];
 
+                        // TODO: i have no idea what to do with this, do i overflow check or not lol
                         // Overflow
-                        if ((this.chip.I & 0xFFF8) != 0) {
-                            this.chip.registers[0xF] = 1;
-                        }
+                        // if ((this.chip.I & 0xFFF8) > 1) {
+                        //     this.chip.registers[0xF] = 1;
+                        // } else {
+                        //     this.chip.registers[0xF] = 0;
+                        // }
                         break;
                     case 0x0A:
                         // FX0A: Get Key. Stops further instruction execution until a key is pressed.
@@ -580,7 +614,7 @@ public class Emulator {
                     case 0x30:
                         // FX30: SUPERCHIP: Sets index register I to address of large font in VX
                         // note: X can only be 0->9
-                        this.chip.I = Chip.LARGE_FONT_START_ADDRESS + (this.chip.registers[X] /*& 0xF*/) * Chip.LARGE_CHARACTER_FONT_HEIGHT;
+                        this.chip.I = Chip.FONT_START_ADDRESS + Chip.FONT_SET.length + (this.chip.registers[X] /*& 0xF*/) * Chip.LARGE_CHARACTER_FONT_HEIGHT;
                         break;
                     case 0x33:
                         // FX33: Binary-coded decimal conversion. Take number in VX and convert it to 3 decimal digits.
@@ -596,7 +630,7 @@ public class Emulator {
                         // Increment I to end up at value I + X + 1 iff config says to do so.
                         // If increment, can run older games. If not, can run newer ones.
                         for (int i = 0; i <= X; i++) {
-                            this.chip.memory[chip.I + i] = (byte)(this.chip.registers[i]);
+                            this.chip.memory[chip.I + i] = (byte)(this.chip.registers[i] & 0xFF);
                         }
                         if (config.STORE_MEMORY_INCREMENTS_INDEX) {
                             this.chip.I += (X + 1);
@@ -626,8 +660,8 @@ public class Emulator {
                         break;
                 }
                 break;
-
             default:
+                System.out.println("Unknown opcode: " + opcode);
         }
     }
 

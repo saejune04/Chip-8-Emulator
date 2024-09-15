@@ -2,6 +2,7 @@ package chip8_java.src;
 
 import java.util.Stack;
 import java.lang.Math;
+import java.util.Arrays;
 
 public class Chip {
     
@@ -102,6 +103,7 @@ public class Chip {
     public int[] registers; // 16 8-bit registers, VF is used as a flag register: set to 1 or 0 based on rules (e.g. carry flag)
     public boolean[] inputs; // 16 possible inputs
     public int opcode;
+    public int[] flags; // Semi-persistent registers
 
     public Chip() {
         this.memory = new byte[MEMORY_SIZE];
@@ -110,15 +112,19 @@ public class Chip {
         this.display = new boolean[DISPLAY_ROWS_HI_RES][DISPLAY_COLS_HI_RES];
         this.inputs = new boolean[NUM_INPUTS];
         this.pc = PROGRAM_START_ADDRESS;
-    }
 
-    public void init() {
+
+        // Format memory with fonts
         for (int i = 0; i < FONT_SIZE; i++) {
             this.memory[i + FONT_START_ADDRESS] = (byte)FONT_SET[i];
         }
+        
         for (int i = 0; i < LARGE_FONT_SIZE; i++) {
             this.memory[i + LARGE_FONT_START_ADDRESS] = (byte)LARGE_FONT_SET_SCHIP[i];
         }
+
+        // Init empty flag registers
+        this.flags = new int[NUM_REGISTERS];
     }
 
     public void updateTimers() {

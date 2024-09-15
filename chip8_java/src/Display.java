@@ -26,7 +26,7 @@ public class Display extends JPanel {
         } else {
             // Low res
             for (int i = 0; i < Chip.DISPLAY_ROWS_LO_RES; i++) {
-                for (int j = 0; j < Chip.DISPLAY_COLS_HI_RES; j++) {
+                for (int j = 0; j < Chip.DISPLAY_COLS_LO_RES; j++) {
                     if (display[i][j]) {
                         g.setColor(Color.WHITE); // On pixel == white
                         g.fillRect(j * scale * 2, i * scale * 2, scale * 2, scale * 2);

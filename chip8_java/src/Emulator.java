@@ -7,9 +7,9 @@ import java.awt.event.KeyEvent;
 import java.io.*;
 import java.util.Arrays;
 
-// TODO: make lores graphics take same space on screen as hires (rn its 1/4 the size)
 // TODO: implement flags to swap between chip-8, super-chip, xo-chip (See test 5)
 // TODO: Check Sound code (its all gpt, it seems to work tho)
+// TODO: implement chip48 flag registers (FX75 and FX85)
 
 public class Emulator {    
     // Config constants
@@ -201,8 +201,6 @@ public class Emulator {
         int N = opcode & 0x000F; // Fourth nibble
         int NN = opcode & 0x00FF; // Third + Fourth nibble
         int NNN = opcode & 0x0FFF; // Second + Third + Fourth nibble
-
-        // System.out.println(Integer.toHexString(opcode));
 
         // Each value can be used in the following instructions:
         // EXECUTE
@@ -519,6 +517,11 @@ public class Emulator {
                         // FX1E: Add value in VX to index register I
                         // Does not affect VF on overflow, but you can set VF if you really want like some interpretors
                         this.chip.I += this.chip.registers[X];
+
+                        // Overflow
+                        if ((this.chip.I & 0xFFF8) != 0) {
+                            this.chip.registers[0xF] = 1;
+                        }
                         break;
                     case 0x0A:
                         // FX0A: Get Key. Stops further instruction execution until a key is pressed.
@@ -577,7 +580,7 @@ public class Emulator {
                     case 0x30:
                         // FX30: SUPERCHIP: Sets index register I to address of large font in VX
                         // note: X can only be 0->9
-                        this.chip.I = Chip.LARGE_FONT_START_ADDRESS + (this.chip.registers[X] & 0xF) * Chip.LARGE_CHARACTER_FONT_HEIGHT;
+                        this.chip.I = Chip.LARGE_FONT_START_ADDRESS + (this.chip.registers[X] /*& 0xF*/) * Chip.LARGE_CHARACTER_FONT_HEIGHT;
                         break;
                     case 0x33:
                         // FX33: Binary-coded decimal conversion. Take number in VX and convert it to 3 decimal digits.
@@ -608,11 +611,23 @@ public class Emulator {
                             this.chip.I += (X + 1);
                         }
                         break;
+                    case 0x75:
+                        // FX75: Save registers V0 -> VX to flag registers
+                        // Flag registers are persistent registers. There are only 64 one-bit flag registers so 0 <= X <= 7 for schip
+                        for (int i = 0; i <= X; i++) {
+                            this.chip.flags[i] = this.chip.registers[i];
+                        }
+                        break;
+                    case 0x85:
+                        // FX85: Load registers V0 -> VX from flag registers 
+                        for (int i = 0; i <= X; i++) {
+                            this.chip.registers[i] = this.chip.flags[i];
+                        }
+                        break;
                 }
                 break;
 
             default:
-                System.out.println("Unknown opcode: " + opcode);
         }
     }
 
